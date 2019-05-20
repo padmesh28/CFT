@@ -1,0 +1,435 @@
+Description: >
+  This template deploys a VPC, with a pair of public subnets
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.192.0.0/16
+  PublicSubnet1CIDR:
+    Description: >-
+      Please enter the IP range (CIDR notation) for the public subnet in the
+      first Availability Zone
+    Type: String
+    Default: 10.192.10.0/24
+
+ 
+  PublicSubnet2CIDR:
+    Description: >-
+      Please enter the IP range (CIDR notation) for the public subnet in the
+      second Availability Zone
+    Type: String
+    Default: 10.192.11.0/24
+
+  AirportPath:
+    Description: The path to register with the Application Load Balancer
+    Type: String
+    Default: /airports
+  CountryPath:
+    Description: The path to register with the Application Load Balancer
+    Type: String
+    Default: /countries
+
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t1.micro
+      - t2.nano
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+     
+    ConstraintDescription: must be a valid EC2 instance type.
+Mappings:
+  AWSInstanceType2Arch:
+    t1.micro:
+      Arch: PV64
+    t2.nano:
+      Arch: HVM64
+    t2.micro:
+      Arch: HVM64
+    t2.small:
+      Arch: HVM64
+    t2.medium:
+      Arch: HVM64
+    t2.large:
+      Arch: HVM64
+    
+  AWSInstanceType2NATArch:
+    t1.micro:
+      Arch: NATPV64
+    t2.nano:
+      Arch: NATHVM64
+    t2.micro:
+      Arch: NATHVM64
+    t2.small:
+      Arch: NATHVM64
+    t2.medium:
+      Arch: NATHVM64
+    t2.large:
+      Arch: NATHVM64
+    
+  AWSRegionArch2AMI:
+    eu-west-1:
+      PV64: ami-4cdd453f
+      HVM64: ami-f9dd458a
+      HVMG2: ami-2955524f
+    eu-west-2:
+      PV64: NOT_SUPPORTED
+      HVM64: ami-886369ec
+      HVMG2: NOT_SUPPORTED
+Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+  InternetGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+  PublicSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select 
+        - 0
+        - !GetAZs ''
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName} Public Subnet (AZ1)'
+  PublicSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select 
+        - 1
+        - !GetAZs ''
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName} Public Subnet (AZ2)'
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName} Public Routes'
+  DefaultPublicRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+  PublicSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+  EC2HostSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Access to the EC2 hosts.
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+          IpProtocol: -1
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-EC2-Hosts'
+  LoadBalancerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Access to the load balancer that sits in front of EC2
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-LoadBalancers'
+  LoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Name: !Ref EnvironmentName
+      Subnets:
+         - !Ref PublicSubnet1
+         - !Ref PublicSubnet2         
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+  LoadBalancerListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 8000
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref DefaultTargetGroup
+  DefaultTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      Name: !Sub '${EnvironmentName}-default'
+      VpcId: !Ref VPC
+      Port: 8080
+      Protocol: HTTP
+
+  
+
+  AirportInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - Ref: ListS3BucketsRole
+  ListS3BucketsPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ListS3BucketsPolicy
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - s3:List*
+          Resource: "*"
+      Roles:
+      - Ref: ListS3BucketsRole
+  ListS3BucketsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+  EC2InstanceAirport:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType:
+        Ref: InstanceType
+      SubnetId:
+        Ref: PublicSubnet1
+      SecurityGroupIds:
+         - !Ref EC2HostSecurityGroup
+      KeyName: Airportkey
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+      IamInstanceProfile:
+        Ref: AirportInstanceProfile
+      ImageId:
+        'Fn::FindInMap':
+          - AWSRegionArch2AMI
+          - Ref: 'AWS::Region'
+          - 'Fn::FindInMap':
+              - AWSInstanceType2Arch
+              - Ref: InstanceType
+              - Arch
+      UserData:
+        "Fn::Base64":
+          !Sub |
+            #!/bin/bash
+            sudo yum install git -y
+            sudo yum update -y
+            sudo yum install java-1.8.0-openjdk-devel
+            aws s3 sync s3://airportservicebucket-test/AirportService/ .
+            sudo nohup java -jar airports-assembly-1.0.1.jar
+            
+  AirportTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      VpcId: !Ref VPC
+      Port: 8080
+      Protocol: HTTP
+      Matcher:
+        HttpCode: 200-299
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /health/live
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Targets:
+        -
+          Id:
+            Ref: EC2InstanceAirport
+          Port: 8080
+  AirportListenerRule:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      ListenerArn: !Ref LoadBalancerListener
+      Priority: 2
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - !Ref AirportPath
+      Actions:
+        - TargetGroupArn: !Ref AirportTargetGroup
+          Type: forward
+
+  CountryInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+       - Ref: ListS3BucketsRole
+  ListS3BucketsPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ListS3BucketsPolicy
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - s3:List*
+          Resource: "*"
+      Roles:
+      - Ref: ListS3BucketsRole
+  ListS3BucketsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+  EC2InstanceCountry:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType:
+        Ref: InstanceType
+      SubnetId:
+        Ref: PublicSubnet2
+      SecurityGroupIds:
+         - !Ref EC2HostSecurityGroup
+      KeyName: Airportkey
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+      IamInstanceProfile:
+        Ref: CountryInstanceProfile
+      ImageId:
+        'Fn::FindInMap':
+          - AWSRegionArch2AMI
+          - Ref: 'AWS::Region'
+          - 'Fn::FindInMap':
+              - AWSInstanceType2Arch
+              - Ref: InstanceType
+              - Arch
+      UserData:
+        "Fn::Base64":
+          !Sub |
+            #!/bin/bash
+            sudo yum install git -y
+            sudo yum update -y
+            sudo yum install java-1.8.0-openjdk-devel -y
+            aws s3 sync s3://airportservicebucket-test/Country-Service/ .
+            sudo nohup java -jar countries-assembly-1.0.1.jar
+            
+  CountryTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      VpcId: !Ref VPC
+      Port: 8080
+      Protocol: HTTP
+      Matcher:
+        HttpCode: 200-299
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /health/live
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Targets:
+        -
+          Id:
+            Ref: EC2InstanceCountry
+          Port: 8080
+     
+  CountryListenerRule:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      ListenerArn: !Ref LoadBalancerListener
+      Priority: 3
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - !Ref CountryPath
+      Actions:
+        - TargetGroupArn: !Ref CountryTargetGroup
+          Type: forward
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref VPC
+  PublicSubnets:
+    Description: A list of the public subnets
+    Value: !Join 
+      - ','
+      - - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+  PublicSubnet1:
+    Description: A reference to the public subnet in the 1st Availability Zone
+    Value: !Ref PublicSubnet1
+  PublicSubnet2:
+    Description: A reference to the public subnet in the 2nd Availability Zone
+    Value: !Ref PublicSubnet2
+  EC2HostSecurityGroup:
+    Description: A reference to the security group for EC2 hosts
+    Value: !Ref EC2HostSecurityGroup
+  LoadBalancerSecurityGroup:
+    Description: A reference to the security group for load balancers
+    Value: !Ref LoadBalancerSecurityGroup
+  LoadBalancer:
+    Description: A reference to the Application Load Balancer
+    Value: !Ref LoadBalancer
+  LoadBalancerUrl:
+    Description: The URL of the ALB
+    Value: !GetAtt LoadBalancer.DNSName
+  LoadBalancerListener:
+    Description: A reference to a port 80 listener
+    Value: !Ref LoadBalancerListener
+  InstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Value:
+      Ref: EC2InstanceAirport
+  InstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Value:
+      Ref: EC2InstanceCountry
